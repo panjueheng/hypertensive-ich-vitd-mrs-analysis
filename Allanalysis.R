@@ -60,11 +60,11 @@ cat("rms version:", as.character(packageVersion("rms")), "\n")
 cat("\n")
 
 # ============================================================================
-# 2. Data import — AUTOMATED (no interactive prompts)
+# 2. Data import - AUTOMATED (no interactive prompts)
 #    Input : <DATA_DIR>/final_ich_cohort.xlsx  (fixed, required)
 #    Output: <OUTPUT_DIR>/  (created if missing; flat, no timestamp subfolder)
 # ============================================================================
-data_file <- file.path(DATA_DIR, "final_ich_cohort.xlsx")
+data_file <- file.path(DATA_DIR, "final_ich_cohort.xlsx")   # ICH score added; ASCII name to avoid encoding issues
 if (!file.exists(data_file)) {
   stop(
     paste0("INPUT DATA NOT FOUND: '", data_file, "'.\n",
@@ -85,6 +85,21 @@ if (file_ext == "csv") {
 }
 
 names(data) <- make.names(names(data), unique = TRUE)
+
+# ---- ICH score (published Hemphill et al., Stroke 2001) ----
+# Components: GCS (3-4->2, 5-12->1, 13-15->0); age>=80->1;
+#             infratentorial origin (Hemorrhage.location==2)->1;
+#             hematoma volume >=30 mL ->1; intraventricular extension==1 ->1.
+# Computed here (before factor conversion) so component columns stay numeric.
+gcs_pts <- ifelse(data$GCS <= 4, 2, ifelse(data$GCS <= 12, 1, 0))
+age_pts <- ifelse(data$age >= 80, 1, 0)
+loc_pts <- ifelse(data$Hemorrhage.location == 2, 1, 0)
+vol_pts <- ifelse(data[["hematoma.volume"]] >= 30, 1, 0)
+ivh_pts <- ifelse(data$intraventricular.extension == 1, 1, 0)
+data$ICH_score <- gcs_pts + age_pts + loc_pts + vol_pts + ivh_pts
+cat("ICH score (published Hemphill 2001) computed. Distribution:\n")
+print(table(data$ICH_score, useNA = "ifany"))
+
 cat("Column names standardized.\n\n")
 cat("Available columns:\n")
 cat(paste("  ", colnames(data)), sep = "\n")
@@ -99,7 +114,7 @@ if (!dir.exists(output_dir)) {
 
 # --- Data provenance / run log (helps reviewers verify reproducibility) ---
 run_info <- c(
-  paste0("Script:         Allanalysis_SCI.R"),
+  paste0("Script:         Allanalysis_R_severity_sensitivity.R"),
   paste0("Run timestamp:  ", format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z")),
   paste0("R version:      ", R.version$version.string),
   paste0("Platform:       ", R.version$platform),
@@ -148,6 +163,7 @@ cont_patterns <- c(
   GCS                    = "^(GCS|gcs)",
   NIHSS                  = "^(NIHSS|nihss)",
   Hematoma.volume        = "hematoma",
+  ICH.score              = "^ICH",
   HGB                    = "^(HGB|hgb|Hemoglobin|hemoglobin)",
   GLU                    = "^(GLU|glu|Glucose|glucose|RPG|rpg)",
   Cr                     = "^(Cr|cr|Creatinine|creatinine)",
@@ -234,10 +250,10 @@ data$log_followup <- log(data[[followup_col]])
 # ============================================================================
 # 5. Baseline characteristics (Table 1)
 # ============================================================================
-data$outcome_group <- ifelse(data[[mrs_col]] <= 2, "Good (mRS≤2)", "Poor (mRS>2)")
+data$outcome_group <- ifelse(data[[mrs_col]] <= 2, "Good (mRS<=2)", "Poor (mRS>2)")
 cat(sprintf("Good outcome: %d (%.1f%%)\n", 
-            sum(data$outcome_group == "Good (mRS≤2)"), 
-            mean(data$outcome_group == "Good (mRS≤2)") * 100))
+            sum(data$outcome_group == "Good (mRS<=2)"), 
+            mean(data$outcome_group == "Good (mRS<=2)") * 100))
 cat(sprintf("Poor outcome: %d (%.1f%%)\n", 
             sum(data$outcome_group == "Poor (mRS>2)"), 
             mean(data$outcome_group == "Poor (mRS>2)") * 100))
@@ -252,7 +268,7 @@ continuous_labels <- list(
   Hematoma.volume        = "Hematoma volume (mL)",
   HGB                    = "Hemoglobin (g/L)",
   GLU                    = "RPG (mmol/L)",
-  Cr                     = "Creatinine (μmol/L)",
+  Cr                     = "Creatinine (\u00B5mol/L)",
   Ca                     = "Calcium (mmol/L)",
   CHOL                   = "Cholesterol (mmol/L)",
   TRIG                   = "Triglycerides (mmol/L)",
@@ -265,7 +281,8 @@ continuous_labels <- list(
   ALB                    = "Albumin (g/L)",
   X25.OH.Vitamin.D       = "25(OH)D (nmol/L)",
   follow.up.duration     = "Follow-up duration (days)",
-  BMI                    = "BMI (kg/m²)"
+  BMI                    = "BMI (kg/m\u00B2)",
+  ICH.score              = "ICH score (points)"
 )
 
 categorical_labels <- list(
@@ -314,9 +331,9 @@ for (var_name in names(resolved_cont)) {
     if (length(vals_clean) >= 3) {
       sw <- shapiro.test(vals_clean)
       if (sw$p.value > 0.05) {
-        repr <- sprintf("%.1f ± %.1f", mean(vals_clean), sd(vals_clean))
+        repr <- sprintf("%.1f \u00B1 %.1f", mean(vals_clean), sd(vals_clean))
       } else {
-        repr <- sprintf("%.1f (%.1f–%.1f)", median(vals_clean), quantile(vals_clean, 0.25), quantile(vals_clean, 0.75))
+        repr <- sprintf("%.1f (%.1f-%.1f)", median(vals_clean), quantile(vals_clean, 0.25), quantile(vals_clean, 0.75))
       }
       overall_results[[var_name]] <- list(
         label = continuous_labels[[var_name]],
@@ -350,7 +367,7 @@ for (var_name in names(resolved_cont)) {
   actual_col <- resolved_cont[[var_name]]
   if (!(actual_col %in% colnames(data))) next
   
-  good <- data[[actual_col]][data$outcome_group == "Good (mRS≤2)"]
+  good <- data[[actual_col]][data$outcome_group == "Good (mRS<=2)"]
   poor <- data[[actual_col]][data$outcome_group == "Poor (mRS>2)"]
   good_clean <- good[!is.na(good)]
   poor_clean <- poor[!is.na(poor)]
@@ -367,21 +384,21 @@ for (var_name in names(resolved_cont)) {
     tr <- t.test(good_clean, poor_clean, var.equal = FALSE)
     test_name <- "t-test"
     p_val <- tr$p.value
-    good_repr <- sprintf("%.1f ± %.1f", mean(good_clean), sd(good_clean))
-    poor_repr <- sprintf("%.1f ± %.1f", mean(poor_clean), sd(poor_clean))
+    good_repr <- sprintf("%.1f \u00B1 %.1f", mean(good_clean), sd(good_clean))
+    poor_repr <- sprintf("%.1f \u00B1 %.1f", mean(poor_clean), sd(poor_clean))
   } else {
     tr <- wilcox.test(good_clean, poor_clean, exact = FALSE)
     test_name <- "Mann-Whitney U"
     p_val <- tr$p.value
-    good_repr <- sprintf("%.1f (%.1f–%.1f)", median(good_clean), quantile(good_clean, 0.25), quantile(good_clean, 0.75))
-    poor_repr <- sprintf("%.1f (%.1f–%.1f)", median(poor_clean), quantile(poor_clean, 0.25), quantile(poor_clean, 0.75))
+    good_repr <- sprintf("%.1f (%.1f-%.1f)", median(good_clean), quantile(good_clean, 0.25), quantile(good_clean, 0.75))
+    poor_repr <- sprintf("%.1f (%.1f-%.1f)", median(poor_clean), quantile(poor_clean, 0.25), quantile(poor_clean, 0.75))
   }
   
   total_n <- nrow(data)
-  good_n <- sum(data$outcome_group == "Good (mRS≤2)")
+  good_n <- sum(data$outcome_group == "Good (mRS<=2)")
   poor_n <- sum(data$outcome_group == "Poor (mRS>2)")
   total_miss <- sum(is.na(data[[actual_col]]))
-  good_miss <- sum(is.na(data[[actual_col]][data$outcome_group == "Good (mRS≤2)"]))
+  good_miss <- sum(is.na(data[[actual_col]][data$outcome_group == "Good (mRS<=2)"]))
   poor_miss <- sum(is.na(data[[actual_col]][data$outcome_group == "Poor (mRS>2)"]))
   
   overall_entry <- overall_results[[var_name]]
@@ -458,10 +475,10 @@ for (var_name in names(resolved_cat)) {
       stringsAsFactors = FALSE
     )
     category_rows <- data.frame()
-    good_total_n <- sum(ct[, "Good (mRS≤2)"])
+    good_total_n <- sum(ct[, "Good (mRS<=2)"])
     poor_total_n <- sum(ct[, "Poor (mRS>2)"])
     for (cat_name in rownames(ct)) {
-      g_cnt <- ct[cat_name, "Good (mRS≤2)"]
+      g_cnt <- ct[cat_name, "Good (mRS<=2)"]
       p_cnt <- ct[cat_name, "Poor (mRS>2)"]
       t_cnt <- g_cnt + p_cnt
       t_n <- good_total_n + poor_total_n
@@ -484,7 +501,7 @@ for (var_name in names(resolved_cat)) {
 
 # Compile Table 1
 en_dash <- function(x) {
-  gsub("([0-9]\\.?[0-9]*)-([0-9])", "\\1–\\2", x)
+  gsub("([0-9]\\.?[0-9]*)-([0-9])", "\\1\u2013\\2", x)
 }
 
 results_df <- do.call(rbind, comparison_results)
@@ -495,7 +512,7 @@ results_df$p_value <- sapply(results_df$p_value, function(x) {
 })
 
 n_total <- nrow(data)
-n_good <- sum(data$outcome_group == "Good (mRS≤2)")
+n_good <- sum(data$outcome_group == "Good (mRS<=2)")
 n_poor <- sum(data$outcome_group == "Poor (mRS>2)")
 
 n_header <- data.frame(
@@ -515,7 +532,8 @@ for (col_i in c("Total", "Good_Outcome", "Poor_Outcome")) {
 output_df <- results_df[, !(colnames(results_df) %in% c("Missing_Good", "Missing_Poor"))]
 write.xlsx(output_df, file.path(output_dir, "baseline_characteristics_R.xlsx"), rowNames = FALSE)
 
-# Export Word table (three-line table)
+# Export Word table (three-line table) — matches original Allanalysis R.txt
+# (flextable + Arial font renders ±, -, <=, mu, ^2 correctly in WPS/Word)
 tryCatch({
   library(officer)
   library(flextable)
@@ -546,7 +564,7 @@ tryCatch({
     "or n (%) for categorical variables. ",
     "P-values were calculated using Mann–Whitney U test for skewed continuous variables, ",
     "independent t-test for normally distributed continuous variables, ",
-    "Chi-square test (with Yates’ continuity correction) or Fisher’s exact test ",
+    "Chi-square test (with Yates' continuity correction) or Fisher's exact test ",
     "(when expected cell frequencies <5) for categorical variables."
   )
   
@@ -781,7 +799,7 @@ if (!is.null(nt) && any(rownames(nt) == "vitd_per10")) {
       for (i in seq_along(idx_vitd)) {
         or_val <- exp(coef_ppo[idx_vitd[i]])
         ci <- exp(confint(fit_ppo)[idx_vitd[i], ])
-        cat(sprintf("  Threshold %d: OR = %.3f (%.3f–%.3f)\n",
+        cat(sprintf("  Threshold %d: OR = %.3f (%.3f-%.3f)\n",
                     i, or_val, ci[1], ci[2]))
       }
     }
@@ -876,8 +894,8 @@ data_sens$unfavorable <- ifelse(data_sens[[mrs_col]] > 2, 1, 0)
 # Category A: Analytical-method sensitivity
 # ---------------------------------------------------------------------------
 
-# 11.1 Binary logistic regression (mRS ≤2 vs ＞2)
-cat("\n--- Sensitivity Analysis 1: Binary Logistic Regression (mRS ≤2 vs ＞2) ---\n")
+# 11.1 Binary logistic regression (mRS <=2 vs >2)
+cat("\n--- Sensitivity Analysis 1: Binary Logistic Regression (mRS <=2 vs >2) ---\n")
 model_logit <- glm(
   as.formula(paste0("unfavorable ~ vitd_per10 + ", adj_full)),
   family = binomial(link = "logit"),
@@ -911,8 +929,8 @@ if (!is.null(admission_col) && admission_col %in% colnames(data_sens)) {
 
 # 11.3 Functional form of follow-up time
 #     Two mutually exclusive forms, all with Model 3 adjustment set:
-#       (a) Linear, raw scale        — tests log transformation assumption
-#       (b) RCS (3 knots)            — tests linearity assumption
+#       (a) Linear, raw scale        - tests log transformation assumption
+#       (b) RCS (3 knots)            - tests linearity assumption
 cat("\n--- Sensitivity Analysis 3: Functional Form of Follow-up Time ---\n")
 cat("    (all with Model 3 adjustment set: age + gender + SBP)\n\n")
 
@@ -927,7 +945,7 @@ res_fu_raw <- extract_polr_or(model_fu_raw, "vitd_per10")
 cat(sprintf("    OR = %.3f (%.3f-%.3f), P = %.4f\n",
             res_fu_raw$or, res_fu_raw$ci_lower, res_fu_raw$ci_upper, res_fu_raw$p_value))
 
-# (b) RCS (3 knots) — tests nonlinearity
+# (b) RCS (3 knots) - tests nonlinearity
 cat("\n(c) Restricted cubic spline (3 knots):\n")
 model_fu_rcs <- polr(
   as.formula(paste0("mRS_ordered ~ vitd_per10 + ", adj_base, " + rcs(followup_raw, 3)")),
@@ -948,6 +966,75 @@ res_nofollowup <- extract_polr_or(model_nofollowup, "vitd_per10")
 cat(sprintf("Without follow-up time: OR = %.3f (%.3f-%.3f), P = %.4f\n",
             res_nofollowup$or, res_nofollowup$ci_lower, res_nofollowup$ci_upper, res_nofollowup$p_value))
 
+# ---------------------------------------------------------------------------
+# Category C: Robustness to established ICH prognostic factors
+#   Each model adds EXACTLY ONE established prognostic factor to the Model 3
+#   adjustment set (age + gender + SBP + log_followup).
+#   NOTE: the ICH score already embeds GCS, hematoma volume and location, so it
+#   is entered as a SEPARATE single-variable sensitivity (never combined with
+#   GCS or volume) to avoid collinearity.
+# ---------------------------------------------------------------------------
+cat("\n--- Sensitivity: Established ICH Prognostic Factors ---\n")
+cat("    (each adds ONE factor to Model 3 set: age + gender + SBP + log_followup)\n\n")
+
+nihss_col <- grep("^NIHSS$",  colnames(data_sens), value = TRUE)[1]
+gcs_col   <- grep("^GCS$",    colnames(data_sens), value = TRUE)[1]
+vol_col   <- grep("hematoma", colnames(data_sens), value = TRUE, ignore.case = TRUE)[1]
+glu_col   <- grep("^GLU$",    colnames(data_sens), value = TRUE)[1]
+cr_col    <- grep("^Cr$",     colnames(data_sens), value = TRUE)[1]
+
+# NIHSS
+res_nihss <- NULL
+if (!is.null(nihss_col) && length(nihss_col) > 0) {
+  model_nihss <- polr(as.formula(paste0("mRS_ordered ~ vitd_per10 + ", adj_full, " + ", nihss_col)),
+                      data = data_sens, method = "logistic", Hess = TRUE)
+  res_nihss <- extract_polr_or(model_nihss, "vitd_per10")
+  cat(sprintf("  NIHSS:            OR = %.3f (%.3f-%.3f), P = %.4f\n",
+              res_nihss$or, res_nihss$ci_lower, res_nihss$ci_upper, res_nihss$p_value))
+}
+# GCS
+res_gcs <- NULL
+if (!is.null(gcs_col) && length(gcs_col) > 0) {
+  model_gcs <- polr(as.formula(paste0("mRS_ordered ~ vitd_per10 + ", adj_full, " + ", gcs_col)),
+                    data = data_sens, method = "logistic", Hess = TRUE)
+  res_gcs <- extract_polr_or(model_gcs, "vitd_per10")
+  cat(sprintf("  GCS:              OR = %.3f (%.3f-%.3f), P = %.4f\n",
+              res_gcs$or, res_gcs$ci_lower, res_gcs$ci_upper, res_gcs$p_value))
+}
+# Hematoma volume
+res_vol <- NULL
+if (!is.null(vol_col) && length(vol_col) > 0) {
+  model_vol <- polr(as.formula(paste0("mRS_ordered ~ vitd_per10 + ", adj_full, " + ", vol_col)),
+                    data = data_sens, method = "logistic", Hess = TRUE)
+  res_vol <- extract_polr_or(model_vol, "vitd_per10")
+  cat(sprintf("  Hematoma volume:  OR = %.3f (%.3f-%.3f), P = %.4f\n",
+              res_vol$or, res_vol$ci_lower, res_vol$ci_upper, res_vol$p_value))
+}
+# ICH score (composite: covers severity, volume, location, IVH, age)
+res_ich <- extract_polr_or(
+  polr(as.formula(paste0("mRS_ordered ~ vitd_per10 + ", adj_full, " + ICH_score")),
+       data = data_sens, method = "logistic", Hess = TRUE), "vitd_per10")
+cat(sprintf("  ICH score:        OR = %.3f (%.3f-%.3f), P = %.4f\n",
+            res_ich$or, res_ich$ci_lower, res_ich$ci_upper, res_ich$p_value))
+# Random plasma glucose
+res_glu <- NULL
+if (!is.null(glu_col) && length(glu_col) > 0) {
+  model_glu <- polr(as.formula(paste0("mRS_ordered ~ vitd_per10 + ", adj_full, " + ", glu_col)),
+                    data = data_sens, method = "logistic", Hess = TRUE)
+  res_glu <- extract_polr_or(model_glu, "vitd_per10")
+  cat(sprintf("  Glucose (RPG):    OR = %.3f (%.3f-%.3f), P = %.4f\n",
+              res_glu$or, res_glu$ci_lower, res_glu$ci_upper, res_glu$p_value))
+}
+# Creatinine (renal function)
+res_cr <- NULL
+if (!is.null(cr_col) && length(cr_col) > 0) {
+  model_cr <- polr(as.formula(paste0("mRS_ordered ~ vitd_per10 + ", adj_full, " + ", cr_col)),
+                   data = data_sens, method = "logistic", Hess = TRUE)
+  res_cr <- extract_polr_or(model_cr, "vitd_per10")
+  cat(sprintf("  Creatinine:       OR = %.3f (%.3f-%.3f), P = %.4f\n",
+              res_cr$or, res_cr$ci_lower, res_cr$ci_upper, res_cr$p_value))
+}
+
 # ============================================================================
 # 12. Interaction tests (effect modification) - exploratory
 #     Updated: base model now includes SBP (consistent with Model 3)
@@ -957,7 +1044,7 @@ cat("\n=== Interaction Tests (Effect Modification) ===\n")
 # Base formula without interaction (uses Model 3 adjustment set: age + gender + SBP + log_followup)
 base_formula_str <- paste0("mRS_ordered ~ vitd_per10 + ", age_col, " + ", gender_col, " + ", sbp_var, " + log_followup")
 
-# 12.1 VitD × Gender
+# 12.1 VitD x Gender
 model_int_gender <- polr(
   as.formula(paste0("mRS_ordered ~ vitd_per10 * ", gender_col, " + ", age_col, " + ", sbp_var, " + log_followup")),
   data = data, method = "logistic", Hess = TRUE
@@ -970,10 +1057,10 @@ lrt_gender <- anova(model_base_gender, model_int_gender)
 p_gender <- lrt_gender$`Pr(Chi)`[2]
 lr_gender <- lrt_gender$`LR stat.`[2]
 
-cat("\nVitD × Gender interaction:\n")
+cat("\nVitD x Gender interaction:\n")
 print(lrt_gender)
 
-# 12.2 VitD × Age (continuous)
+# 12.2 VitD x Age (continuous)
 model_int_age <- polr(
   as.formula(paste0("mRS_ordered ~ vitd_per10 * ", age_col, " + ", gender_col, " + ", sbp_var, " + log_followup")),
   data = data, method = "logistic", Hess = TRUE
@@ -986,7 +1073,7 @@ lrt_age <- anova(model_base_age, model_int_age)
 p_age <- lrt_age$`Pr(Chi)`[2]
 lr_age <- lrt_age$`LR stat.`[2]
 
-cat("\nVitD × Age interaction:\n")
+cat("\nVitD x Age interaction:\n")
 print(lrt_age)
 
 # --- Sensitivity analyses combined table (including E-values) ---
@@ -1001,13 +1088,25 @@ add_sens_row <- function(name, or_val, ci_low, ci_up, p_val) {
   c(name, or_val, ci_low, ci_up, p_val, ev$E_value, ev$E_value_CI)
 }
 
-# Category A: Analytical-method sensitivity
-if (exists("logit_or")) sens_list[[length(sens_list)+1]] <- add_sens_row("A1. Binary Logistic (mRS ≤2 vs ＞2)", logit_or, logit_ci[1], logit_ci[2], logit_p)
-if (exists("res_season") && !is.null(res_season)) sens_list[[length(sens_list)+1]] <- add_sens_row("A2. Seasonal Adjustment", res_season$or, res_season$ci_lower, res_season$ci_upper, res_season$p_value)
-# Category B: Follow-up-time sensitivity
-if (exists("res_fu_raw")) sens_list[[length(sens_list)+1]] <- add_sens_row("B1. Follow-up linear (raw scale)", res_fu_raw$or, res_fu_raw$ci_lower, res_fu_raw$ci_upper, res_fu_raw$p_value)
-if (exists("res_fu_rcs")) sens_list[[length(sens_list)+1]] <- add_sens_row("B2. Follow-up RCS (3 knots)", res_fu_rcs$or, res_fu_rcs$ci_lower, res_fu_rcs$ci_upper, res_fu_rcs$p_value)
-if (exists("res_nofollowup")) sens_list[[length(sens_list)+1]] <- add_sens_row("B3. Without follow-up adjustment", res_nofollowup$or, res_nofollowup$ci_lower, res_nofollowup$ci_upper, res_nofollowup$p_value)
+# Sensitivity models are listed here in the logical order they appear in the
+# single combined forest figure: (1) analytical-method robustness,
+# (2) follow-up-time specification, (3) established ICH prognostic factors.
+# Labels are descriptive and carry NO A/B/C numbering.
+
+# (1) Analytical-method robustness
+if (exists("logit_or")) sens_list[[length(sens_list)+1]] <- add_sens_row("Binary logistic regression", logit_or, logit_ci[1], logit_ci[2], logit_p)
+if (exists("res_season") && !is.null(res_season)) sens_list[[length(sens_list)+1]] <- add_sens_row("Seasonal adjustment", res_season$or, res_season$ci_lower, res_season$ci_upper, res_season$p_value)
+# (2) Follow-up-time specification
+if (exists("res_fu_raw")) sens_list[[length(sens_list)+1]] <- add_sens_row("Linear follow-up time", res_fu_raw$or, res_fu_raw$ci_lower, res_fu_raw$ci_upper, res_fu_raw$p_value)
+if (exists("res_fu_rcs")) sens_list[[length(sens_list)+1]] <- add_sens_row("RCS follow-up time", res_fu_rcs$or, res_fu_rcs$ci_lower, res_fu_rcs$ci_upper, res_fu_rcs$p_value)
+if (exists("res_nofollowup")) sens_list[[length(sens_list)+1]] <- add_sens_row("No follow-up adjustment", res_nofollowup$or, res_nofollowup$ci_lower, res_nofollowup$ci_upper, res_nofollowup$p_value)
+# (3) Established ICH prognostic factors (each adds ONE factor to Model 3 set)
+if (exists("res_nihss") && !is.null(res_nihss)) sens_list[[length(sens_list)+1]] <- add_sens_row("Adjusted for NIHSS", res_nihss$or, res_nihss$ci_lower, res_nihss$ci_upper, res_nihss$p_value)
+if (exists("res_gcs") && !is.null(res_gcs)) sens_list[[length(sens_list)+1]] <- add_sens_row("Adjusted for GCS", res_gcs$or, res_gcs$ci_lower, res_gcs$ci_upper, res_gcs$p_value)
+if (exists("res_vol") && !is.null(res_vol)) sens_list[[length(sens_list)+1]] <- add_sens_row("Adjusted for hematoma volume", res_vol$or, res_vol$ci_lower, res_vol$ci_upper, res_vol$p_value)
+if (exists("res_ich")) sens_list[[length(sens_list)+1]] <- add_sens_row("Adjusted for ICH score", res_ich$or, res_ich$ci_lower, res_ich$ci_upper, res_ich$p_value)
+if (exists("res_glu") && !is.null(res_glu)) sens_list[[length(sens_list)+1]] <- add_sens_row("Adjusted for random plasma glucose", res_glu$or, res_glu$ci_lower, res_glu$ci_upper, res_glu$p_value)
+if (exists("res_cr") && !is.null(res_cr)) sens_list[[length(sens_list)+1]] <- add_sens_row("Adjusted for creatinine", res_cr$or, res_cr$ci_lower, res_cr$ci_upper, res_cr$p_value)
 
 if (length(sens_list) > 0) {
   sens_table <- as.data.frame(do.call(rbind, sens_list), stringsAsFactors = FALSE)
@@ -1130,11 +1229,11 @@ tryCatch({
        las = 1, cex.axis = 0.76, tick = FALSE, line = -0.5, font = 1)
   
   for (i in 1:n_models) {
-    lab <- sprintf("%.2f (%.2f–%.2f)", or_vals[i], ci_l[i], ci_u[i])
+    lab <- sprintf("%.2f (%.2f-%.2f)", or_vals[i], ci_l[i], ci_u[i])
     text(x_max * 1.03, y_pos[i], lab, cex = 0.73, adj = 0, font = 1)
   }
   
-  mtext("Primary analysis – ordinal logistic regression",
+  mtext("Primary analysis - ordinal logistic regression",
         side = 3, line = 0.5, adj = 0, cex = 0.84, font = 2)
   
   dev.off()
@@ -1182,12 +1281,13 @@ if (!is.null(sens_forest) && nrow(sens_forest) > 0) {
       cat("Model 3 unavailable (no SBP); plotting sensitivity rows only.\n")
     }
     
-    # --- 13b. Sensitivity analysis forest plot ---
-    cat("\n=== Generating Sensitivity Forest Plot ===\n")
+    # --- 13b. Sensitivity forest plot (single figure, as in original Allanalysis R.txt) ---
+    cat("\n=== Generating Sensitivity Forest Plot (single figure) ===\n")
     
+    # Labels are already descriptive and carry no A/B/C numbering,
+    # so only a defensive full-width ">" conversion is applied.
     clean_label <- function(s) {
-      s <- gsub("＞", ">",  s, useBytes = TRUE)
-      s <- sub("^[AB]\\d+\\.\\s*", "", s)
+      s <- gsub("\uFF1E", ">",  s, useBytes = TRUE)
       s
     }
     forest_df$Analysis <- sapply(forest_df$Analysis, clean_label)
@@ -1195,7 +1295,7 @@ if (!is.null(sens_forest) && nrow(sens_forest) > 0) {
     n_rows <- nrow(forest_df)
     
     fig_width_mm  <- 180
-    fig_height_mm <- 42 + 22 * n_rows
+    fig_height_mm <- 40 + 18 * n_rows
     
     tiff(file.path(output_dir, "Fig_sensitivity_forest.tiff"),
          width = fig_width_mm, height = fig_height_mm,
@@ -1274,10 +1374,10 @@ writeLines(po_results, file.path(output_dir, "PO_assumption_check.txt"))
 # --- Interaction tests ---
 interaction_list <- list()
 if (exists("p_gender") && exists("lr_gender")) {
-  interaction_list[[length(interaction_list)+1]] <- c("VitD × Gender", lr_gender, 1, p_gender)
+  interaction_list[[length(interaction_list)+1]] <- c("VitD x Gender", lr_gender, 1, p_gender)
 }
 if (exists("p_age") && exists("lr_age")) {
-  interaction_list[[length(interaction_list)+1]] <- c("VitD × Age", lr_age, 1, p_age)
+  interaction_list[[length(interaction_list)+1]] <- c("VitD x Age", lr_age, 1, p_age)
 }
 if (length(interaction_list) > 0) {
   interaction_table <- as.data.frame(do.call(rbind, interaction_list), stringsAsFactors = FALSE)
