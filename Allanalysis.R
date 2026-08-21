@@ -1,7 +1,29 @@
 rm(list = ls())
 
-# ---- Project paths (override PROJECT_DIR only if running from elsewhere) ----
-PROJECT_DIR <- getwd()                        # RStudio project root
+# ---- Project paths (auto-detect the script's own directory) ----
+# The data/ folder sits NEXT TO this script, not necessarily in getwd().
+# Auto-detect the script directory so the analysis runs unchanged whether it
+# is launched from RStudio or from the command line (Rscript) — the one-click,
+# reproducible behaviour journals expect.
+detect_script_dir <- function() {
+  # (1) Command-line / Rscript: the script path is passed as --file=
+  args <- commandArgs(trailingOnly = FALSE)
+  file_arg <- grep("^--file=", args, value = TRUE)
+  if (length(file_arg) > 0) {
+    return(normalizePath(dirname(sub("^--file=", "", file_arg[1])), winslash = "/"))
+  }
+  # (2) RStudio interactive: path of the active source document
+  if (requireNamespace("rstudioapi", quietly = TRUE)) {
+    p <- tryCatch(rstudioapi::getActiveDocumentContext()$path, error = function(e) "")
+    if (nzchar(p)) {
+      return(normalizePath(dirname(p), winslash = "/"))
+    }
+  }
+  # (3) Fallback: current working directory
+  normalizePath(getwd(), winslash = "/")
+}
+
+PROJECT_DIR <- detect_script_dir()
 DATA_DIR    <- file.path(PROJECT_DIR, "data", "clean")
 OUTPUT_DIR  <- file.path(PROJECT_DIR, "output")
 
@@ -43,7 +65,8 @@ set.seed(20260719)
 # 1. Package installation and loading
 # ============================================================================
 packages_needed <- c("MASS", "brant", "ordinal", "VGAM", "survival", "splines",
-                     "readxl", "openxlsx", "officer", "flextable", "lmtest", "rms")
+                     "readxl", "openxlsx", "officer", "flextable", "lmtest", "rms",
+                     "mice")
 for (pkg in packages_needed) {
   if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
     install.packages(pkg, repos = CRAN_REPO)
@@ -180,6 +203,7 @@ cont_patterns <- c(
   X25.OH.Vitamin.D       = "25\\.?OH|Vitamin\\.?D|vitamin\\.?d|Vit\\.?D|vit\\.?d",
   follow.up.duration     = "^follow\\.up\\.duration$|^follow_up_duration$",
   BMI                    = "^(BMI|bmi|Body.mass)",
+  NLR                    = "^(NLR|nlr|Neutrophil.to.lymphocyte|neutrophil.to.lymphocyte)",
   mRS                    = "^(mRS|MRS|Modified.Rankin|modified.rankin)"
 )
 
@@ -282,6 +306,7 @@ continuous_labels <- list(
   X25.OH.Vitamin.D       = "25(OH)D (nmol/L)",
   follow.up.duration     = "Follow-up duration (days)",
   BMI                    = "BMI (kg/m\u00B2)",
+  NLR                    = "NLR",
   ICH.score              = "ICH score (points)"
 )
 
@@ -1107,6 +1132,28 @@ if (exists("res_vol") && !is.null(res_vol)) sens_list[[length(sens_list)+1]] <- 
 if (exists("res_ich")) sens_list[[length(sens_list)+1]] <- add_sens_row("Adjusted for ICH score", res_ich$or, res_ich$ci_lower, res_ich$ci_upper, res_ich$p_value)
 if (exists("res_glu") && !is.null(res_glu)) sens_list[[length(sens_list)+1]] <- add_sens_row("Adjusted for random plasma glucose", res_glu$or, res_glu$ci_lower, res_glu$ci_upper, res_glu$p_value)
 if (exists("res_cr") && !is.null(res_cr)) sens_list[[length(sens_list)+1]] <- add_sens_row("Adjusted for creatinine", res_cr$or, res_cr$ci_lower, res_cr$ci_upper, res_cr$p_value)
+# (4) Major-revision additions: surgical intervention (R1) and NLR (R6)
+if (exists("model3")) {
+  adj_m3_sens <- paste0(age_col, " + ", gender_col, " + ", sbp_var, " + log_followup")
+  # surgery as additional covariate
+  m3_surg_sens <- polr(as.formula(paste0("mRS_ordered ~ vitd_per10 + ", adj_m3_sens, " + surgical.treatment")),
+                       data = data, method = "logistic", Hess = TRUE)
+  res_surg_sens <- extract_polr_or(m3_surg_sens, "vitd_per10")
+  sens_list[[length(sens_list)+1]] <- add_sens_row("Adjusted for surgery", res_surg_sens$or, res_surg_sens$ci_lower, res_surg_sens$ci_upper, res_surg_sens$p_value)
+  # non-surgical subgroup
+  data_nosurg_sens <- data[data$surgical.treatment == "No", ]
+  m_nosurg_sens <- polr(as.formula(paste0("mRS_ordered ~ vitd_per10 + ", adj_m3_sens)),
+                        data = data_nosurg_sens, method = "logistic", Hess = TRUE)
+  res_nosurg_sens <- extract_polr_or(m_nosurg_sens, "vitd_per10")
+  sens_list[[length(sens_list)+1]] <- add_sens_row("Non-surgical subgroup", res_nosurg_sens$or, res_nosurg_sens$ci_lower, res_nosurg_sens$ci_upper, res_nosurg_sens$p_value)
+  # NLR as additional covariate
+  if ("NLR" %in% colnames(data)) {
+    m3_nlr_sens <- polr(as.formula(paste0("mRS_ordered ~ vitd_per10 + ", adj_m3_sens, " + NLR")),
+                        data = data, method = "logistic", Hess = TRUE)
+    res_nlr_sens <- extract_polr_or(m3_nlr_sens, "vitd_per10")
+    sens_list[[length(sens_list)+1]] <- add_sens_row("Adjusted for NLR", res_nlr_sens$or, res_nlr_sens$ci_lower, res_nlr_sens$ci_upper, res_nlr_sens$p_value)
+  }
+}
 
 if (length(sens_list) > 0) {
   sens_table <- as.data.frame(do.call(rbind, sens_list), stringsAsFactors = FALSE)
@@ -1292,59 +1339,79 @@ if (!is.null(sens_forest) && nrow(sens_forest) > 0) {
     }
     forest_df$Analysis <- sapply(forest_df$Analysis, clean_label)
     
-    n_rows <- nrow(forest_df)
-    
-    fig_width_mm  <- 180
-    fig_height_mm <- 40 + 18 * n_rows
-    
-    tiff(file.path(output_dir, "Fig_sensitivity_forest.tiff"),
-         width = fig_width_mm, height = fig_height_mm,
-         units = "mm", res = 400,
-         compression = "lzw", type = "cairo",
-         bg = "white")
-    
-    par(family = "sans",
-        mar = c(4.2, 13, 4.0, 8),
-        mgp = c(2.5, 0.7, 0),
-        xpd = NA)
-    
-    xlims     <- range(c(forest_df$CI_lower, forest_df$CI_upper), na.rm = TRUE)
-    x_min     <- max(0.3, floor(xlims[1] * 10) / 10)
-    x_max_data <- min(1.2, ceiling(xlims[2] * 20) / 20)
-    if (x_max_data < 1.0) x_max_data <- 1.0
-    x_lab_max <- x_max_data + 0.25 * (x_max_data - x_min)
-    
-    y_pos <- n_rows:1
-    plot(NA, NA,
-         xlim = c(x_min, x_lab_max), ylim = c(0.5, n_rows + 0.5),
-         xlab = "", ylab = "", yaxt = "n", bty = "l", xaxt = "n")
-    segments(1, 0.5, 1, n_rows + 0.5, lty = 2, col = "grey50", lwd = 1)
-    
-    data_ticks <- pretty(c(x_min, x_max_data), 5)
-    axis(1, at = data_ticks, cex.axis = 0.72, tick = FALSE, line = -0.3)
-    
-    for (i in 1:n_rows) {
-      lines(c(forest_df$CI_lower[i], forest_df$CI_upper[i]),
-            c(y_pos[i], y_pos[i]), lwd = 2, col = "#1F4E79")
-      points(forest_df$OR[i], y_pos[i], pch = 18, cex = 1.2, col = "#1F4E79")
+    # Reusable forest-plot renderer (used for both main and supplementary figures).
+    draw_forest <- function(forest_df, outfile, title, per_row_mm = 10) {
+      n_rows <- nrow(forest_df)
+      
+      fig_width_mm  <- 180
+      fig_height_mm <- 40 + per_row_mm * n_rows
+      
+      tiff(file.path(output_dir, outfile),
+           width = fig_width_mm, height = fig_height_mm,
+           units = "mm", res = 400,
+           compression = "lzw", type = "cairo",
+           bg = "white")
+      
+      par(family = "sans",
+          mar = c(4.2, 11, 4.0, 8),
+          mgp = c(2.5, 0.7, 0),
+          xpd = NA)
+      
+      xlims     <- range(c(forest_df$CI_lower, forest_df$CI_upper), na.rm = TRUE)
+      x_min     <- max(0.3, floor(xlims[1] * 10) / 10)
+      x_max_data <- min(1.2, ceiling(xlims[2] * 20) / 20)
+      if (x_max_data < 1.0) x_max_data <- 1.0
+      x_lab_max <- x_max_data + 0.40 * (x_max_data - x_min)
+      
+      y_pos <- n_rows:1
+      plot(NA, NA,
+           xlim = c(x_min, x_lab_max), ylim = c(0.5, n_rows + 0.5),
+           xlab = "", ylab = "", yaxt = "n", bty = "l", xaxt = "n")
+      segments(1, 0.5, 1, n_rows + 0.5, lty = 2, col = "grey50", lwd = 1)
+      
+      data_ticks <- pretty(c(x_min, x_max_data), 5)
+      axis(1, at = data_ticks, cex.axis = 0.72, tick = FALSE, line = -0.3)
+      
+      for (i in 1:n_rows) {
+        lines(c(forest_df$CI_lower[i], forest_df$CI_upper[i]),
+              c(y_pos[i], y_pos[i]), lwd = 2, col = "#1F4E79")
+        points(forest_df$OR[i], y_pos[i], pch = 18, cex = 1.2, col = "#1F4E79")
+      }
+      
+      axis(2, at = y_pos, labels = forest_df$Analysis,
+           las = 1, cex.axis = 0.72, tick = FALSE, line = -0.3, font = 1)
+      
+      for (i in 1:n_rows) {
+        lab <- sprintf("%.2f (%.2f-%.2f), P=%.3f",
+                       forest_df$OR[i], forest_df$CI_lower[i], forest_df$CI_upper[i],
+                       forest_df$P_value[i])
+        text(x_lab_max, y_pos[i], lab, cex = 0.70, adj = 0, font = 1)
+      }
+      
+      mtext(title,
+            side = 3, line = 1.2, adj = 0.5, cex = 0.80, font = 2)
+      mtext("Odds Ratio (95% CI) per 10 nmol/L 25(OH)D",
+            side = 1, line = 1.8, cex = 0.72)
+      
+      dev.off()
+      cat("Forest plot saved:", outfile, "\n")
     }
     
-    axis(2, at = y_pos, labels = forest_df$Analysis,
-         las = 1, cex.axis = 0.72, tick = FALSE, line = -0.3, font = 1)
+    # (a) Main Figure 3: primary model + key sensitivity analyses only.
+    #     Follow-up-time specifications and secondary single-covariate
+    #     adjustments (glucose, creatinine) are shown in the supplementary plot.
+    drop_main <- c("Linear follow-up time", "RCS follow-up time",
+                   "No follow-up adjustment",
+                   "Adjusted for random plasma glucose",
+                   "Adjusted for creatinine")
+    forest_main <- forest_df[!(forest_df$Analysis %in% drop_main), , drop = FALSE]
     
-    for (i in 1:n_rows) {
-      lab <- sprintf("%.2f (%.2f-%.2f)",
-                     forest_df$OR[i], forest_df$CI_lower[i], forest_df$CI_upper[i])
-      text(x_lab_max, y_pos[i], lab, cex = 0.70, adj = 0, font = 1)
-    }
+    draw_forest(forest_main, "Fig_sensitivity_forest.tiff",
+                "Key Sensitivity Analyses for the Association Between Serum 25(OH)D\nand mRS After Hypertensive ICH")
     
-    mtext("Sensitivity Analyses for the Association Between Serum 25(OH)D\nand mRS After Hypertensive ICH",
-          side = 3, line = 1.2, adj = 0.5, cex = 0.80, font = 2)
-    mtext("Odds Ratio (95% CI) per 10 nmol/L 25(OH)D",
-          side = 1, line = 1.8, cex = 0.72)
-    
-    dev.off()
-    cat("Sensitivity forest plot saved: Fig_sensitivity_forest.tiff\n")
+    # (b) Supplementary Figure S2: complete set of sensitivity analyses.
+    draw_forest(forest_df, "FigS2_forest_plot.tiff",
+                "Complete Set of Sensitivity Analyses for the Association Between\nSerum 25(OH)D and mRS After Hypertensive ICH")
   }, error = function(e) {
     if (dev.cur() > 1) dev.off()
     cat("[WARNING] Sensitivity forest plot failed:", e$message, "\n")
@@ -1399,6 +1466,235 @@ saveRDS(list(model1 = model1, model2 = model2, model3 = if (has_sbp) model3 else
 cat("Primary model objects saved (continuous + categorical).\n")
 
 cat("\nAll additional results processing complete.\n")
+
+# ============================================================================
+# 14b. Major revision analyses (reviewer "Must Fix" items R1/R2/R4/R5/R6/R7)
+#      - R2: standardized mean differences (SMD) for Table 1
+#      - R1: surgical intervention bias (surgery-adjusted + subgroup)
+#      - R5: BMI missingness (mechanism + multiple imputation + complete-case)
+#      - R6: neutrophil-to-lymphocyte ratio (NLR) as inflammatory marker
+#      - R7: post-hoc power + minimum detectable effect size
+#      - R4: DAG structure sensitivity analysis (dagitty)
+# ============================================================================
+cat("\n\n========== Major Revision Analyses (R1/R2/R4/R5/R6/R7) ==========\n")
+
+# ---------- R2: Standardized mean differences (SMD) for Table 1 ----------
+smd_cont <- function(x, group) {
+  g0 <- x[group == 0]; g1 <- x[group == 1]
+  g0 <- g0[!is.na(g0)]; g1 <- g1[!is.na(g1)]
+  if (length(g0) < 2 || length(g1) < 2) return(NA_real_)
+  sp <- sqrt((var(g0) + var(g1)) / 2)
+  (mean(g1) - mean(g0)) / sp
+}
+smd_bin <- function(x, group) {
+  g0 <- x[group == 0]; g1 <- x[group == 1]
+  g0 <- g0[!is.na(g0)]; g1 <- g1[!is.na(g1)]
+  p0 <- mean(g0); p1 <- mean(g1)
+  if (p0 %in% c(0, 1) || p1 %in% c(0, 1)) return(NA_real_)
+  (p1 - p0) / sqrt((p0 * (1 - p0) + p1 * (1 - p1)) / 2)
+}
+grp <- ifelse(data[[mrs_col]] > 2, 1, 0)
+smd_tab <- data.frame(
+  Variable = c(
+    # 连续变量（标签与 Table 1 的 Characteristic 一致）
+    continuous_labels[["age"]], continuous_labels[["SBP"]], continuous_labels[["DBP"]],
+    continuous_labels[["MAP"]], continuous_labels[["GCS"]], continuous_labels[["NIHSS"]],
+    continuous_labels[["Hematoma.volume"]], continuous_labels[["ICH.score"]],
+    continuous_labels[["HGB"]], continuous_labels[["GLU"]], continuous_labels[["Cr"]],
+    continuous_labels[["CHOL"]], continuous_labels[["TRIG"]], continuous_labels[["HDL.C"]],
+    continuous_labels[["LDL.C"]], continuous_labels[["ALT"]], continuous_labels[["AST"]],
+    continuous_labels[["GGT"]], continuous_labels[["ALP"]], continuous_labels[["ALB"]],
+    continuous_labels[["X25.OH.Vitamin.D"]], continuous_labels[["follow.up.duration"]],
+    continuous_labels[["BMI"]], continuous_labels[["NLR"]],
+    # 分类变量（header，SMD 用参考类别）
+    categorical_labels[["gender"]], categorical_labels[["Hemorrhage.location"]],
+    categorical_labels[["intraventricular.extension"]], categorical_labels[["surgical.treatment"]],
+    categorical_labels[["admission.period"]]
+  ),
+  SMD = round(c(
+    smd_cont(data[[age_col]], grp), smd_cont(data[[sbp_var]], grp), smd_cont(data$DBP, grp),
+    smd_cont(data$MAP, grp), smd_cont(data$GCS, grp), smd_cont(data$NIHSS, grp),
+    smd_cont(data$hematoma.volume, grp), smd_cont(data$ICH_score, grp),
+    smd_cont(data$HGB, grp), smd_cont(data$GLU, grp), smd_cont(data$Cr, grp),
+    smd_cont(data$CHOL, grp), smd_cont(data$TRIG, grp), smd_cont(data$HDL.C, grp),
+    smd_cont(data$LDL.C, grp), smd_cont(data$ALT, grp), smd_cont(data$AST, grp),
+    smd_cont(data$GGT, grp), smd_cont(data$ALP, grp), smd_cont(data$ALB, grp),
+    smd_cont(data[[vitd_col]], grp), smd_cont(data[[followup_col]], grp),
+    smd_cont(data$BMI, grp), smd_cont(data$NLR, grp),
+    smd_bin(data$gender == "Male", grp),
+    smd_bin(data$Hemorrhage.location == "Supratentorial", grp),
+    smd_bin(data$intraventricular.extension == "Yes", grp),
+    smd_bin(data$surgical.treatment == "Yes", grp),
+    smd_bin(data$admission.period == "May-October", grp)
+  ), 3),
+  stringsAsFactors = FALSE
+)
+write.csv(smd_tab, file.path(output_dir, "R2_SMD_table1.csv"), row.names = FALSE)
+cat("R2 SMD table saved -> output/R2_SMD_table1.csv\n"); print(smd_tab)
+
+# 合并 SMD 进 baseline_characteristics_R.xlsx（按 Characteristic 匹配，缺失/类别行留空）
+base_file <- file.path(output_dir, "baseline_characteristics_R.xlsx")
+if (file.exists(base_file)) {
+  base_tab <- read.xlsx(base_file, sheet = 1)
+  base_tab$SMD <- sapply(base_tab$Characteristic, function(ch) {
+    idx <- match(ch, smd_tab$Variable)
+    if (!is.na(idx)) round(smd_tab$SMD[idx], 3) else ""
+  })
+  write.xlsx(base_tab, base_file, rowNames = FALSE)
+  cat("SMD merged into baseline_characteristics_R.xlsx\n")
+}
+
+# ---------- R1: Surgical intervention bias ----------
+cat("\n--- R1: Surgical intervention bias ---\n")
+adj_m3 <- paste0(age_col, " + ", gender_col, " + ", sbp_var, " + log_followup")
+# (1) surgery as additional covariate in the fully adjusted model
+m3_surg <- polr(as.formula(paste0("mRS_ordered ~ vitd_per10 + ", adj_m3, " + surgical.treatment")),
+                data = data, method = "logistic", Hess = TRUE)
+r_surg <- extract_polr_or(m3_surg, "vitd_per10")
+cat(sprintf("Model 3 + surgery: OR=%.3f (%.3f-%.3f) P=%.4f\n",
+            r_surg$or, r_surg$ci_lower, r_surg$ci_upper, r_surg$p_value))
+# (2) association of vitD with surgery (does low vitD predict surgery?)
+#     NOTE: follow-up duration is intentionally NOT adjusted here, because the
+#     outcome is "surgery" (an acute-phase decision made within days of onset),
+#     which temporally PRECEDES the 3-6-month mRS assessment. Follow-up time
+#     therefore cannot confound the vitD -> surgery association. (Follow-up time
+#     IS adjusted in every model whose outcome is mRS, above and below.)
+m_vitd_surg <- glm(as.formula(paste0("surgical.treatment ~ vitd_per10 + ", age_col, " + ", gender_col, " + ", sbp_var)),
+                   data = data, family = binomial)
+sv <- summary(m_vitd_surg)$coefficients["vitd_per10", ]
+cat(sprintf("Surgery ~ vitd_per10: OR=%.3f (%.3f-%.3f) P=%.4f\n",
+            exp(sv[1]), exp(sv[1] - 1.96 * sv[2]), exp(sv[1] + 1.96 * sv[2]), sv[4]))
+# (3) non-surgery subgroup
+data_nosurg <- data[data$surgical.treatment == "No", ]
+m_nosurg <- polr(as.formula(paste0("mRS_ordered ~ vitd_per10 + ", adj_m3)),
+                 data = data_nosurg, method = "logistic", Hess = TRUE)
+r_nosurg <- extract_polr_or(m_nosurg, "vitd_per10")
+cat(sprintf("Non-surgery subgroup (n=%d): OR=%.3f (%.3f-%.3f) P=%.4f\n",
+            nrow(data_nosurg), r_nosurg$or, r_nosurg$ci_lower, r_nosurg$ci_upper, r_nosurg$p_value))
+# (4) surgery subgroup
+data_surg <- data[data$surgical.treatment == "Yes", ]
+m_surg_sub <- tryCatch(polr(as.formula(paste0("mRS_ordered ~ vitd_per10 + ", adj_m3)),
+                            data = data_surg, method = "logistic", Hess = TRUE),
+                       error = function(e) NULL)
+if (!is.null(m_surg_sub)) {
+  r_surgsub <- extract_polr_or(m_surg_sub, "vitd_per10")
+  cat(sprintf("Surgery subgroup (n=%d): OR=%.3f (%.3f-%.3f) P=%.4f\n",
+              nrow(data_surg), r_surgsub$or, r_surgsub$ci_lower, r_surgsub$ci_upper, r_surgsub$p_value))
+} else {
+  cat(sprintf("Surgery subgroup (n=%d): not estimable\n", nrow(data_surg)))
+}
+
+# ---------- R5: BMI missingness ----------
+cat("\n--- R5: BMI missingness ---\n")
+data$bmi_missing <- ifelse(is.na(data$BMI), 1, 0)
+cat(sprintf("BMI missing: %d/%d (%.1f%%)\n", sum(data$bmi_missing), nrow(data), mean(data$bmi_missing) * 100))
+cmp_grp <- function(x, miss, cont = TRUE) {
+  a <- x[miss == 0]; b <- x[miss == 1]
+  a <- a[!is.na(a)]; b <- b[!is.na(b)]
+  if (length(a) < 2 || length(b) < 2) return(c(NA, NA, NA))
+  if (cont) { p <- tryCatch(wilcox.test(a, b)$p.value, error = function(e) NA); c(median(a), median(b), p) }
+  else { tb <- table(x[miss == 0], x[miss == 1]); c(NA, NA, tryCatch(fisher.test(tb)$p.value, error = function(e) NA)) }
+}
+miss_comp <- data.frame(
+  Variable = c("Age", "SBP", "GCS", "NIHSS", "Hematoma volume", "25(OH)D", "mRS", "Follow-up"),
+  BMI_complete = NA_real_, BMI_missing = NA_real_, P = NA_real_)
+for (i in seq_len(nrow(miss_comp))) {
+  v <- miss_comp$Variable[i]
+  col <- switch(v, Age = age_col, SBP = sbp_var, GCS = "GCS", NIHSS = "NIHSS",
+                "Hematoma volume" = "hematoma.volume", "25(OH)D" = vitd_col,
+                mRS = mrs_col, "Follow-up" = followup_col)
+  r <- cmp_grp(data[[col]], data$bmi_missing)
+  miss_comp$BMI_complete[i] <- round(r[1], 1); miss_comp$BMI_missing[i] <- round(r[2], 1); miss_comp$P[i] <- round(r[3], 4)
+}
+write.csv(miss_comp, file.path(output_dir, "R5_BMI_missingness.csv"), row.names = FALSE)
+print(miss_comp)
+# complete-case under {age, gender, BMI}
+d_bmicc <- data[!is.na(data$BMI), ]
+m_bmi <- polr(as.formula(paste0("mRS_ordered ~ vitd_per10 + ", age_col, " + ", gender_col, " + BMI + log_followup")),
+              data = d_bmicc, method = "logistic", Hess = TRUE)
+r_bmi <- extract_polr_or(m_bmi, "vitd_per10")
+cat(sprintf("{age,gender,BMI} complete-case (n=%d): OR=%.3f (%.3f-%.3f) P=%.4f\n",
+            nrow(d_bmicc), r_bmi$or, r_bmi$ci_lower, r_bmi$ci_upper, r_bmi$p_value))
+# multiple imputation (mice, m = 10)
+data$mRS_num <- as.numeric(data[[mrs_col]])
+imp_data <- data[, c("vitd_per10", age_col, gender_col, sbp_var, "log_followup", "mRS_num", "BMI", "CHOL", "TRIG", "HDL.C", "LDL.C")]
+imp <- mice(imp_data, m = 10, maxit = 20, seed = 20260719, printFlag = FALSE)
+pool_polr <- function(imp, formula, var = "vitd_per10") {
+  est <- se <- numeric(imp$m)
+  for (i in seq_len(imp$m)) {
+    dd <- complete(imp, i)
+    dd$mRS_ordered <- ordered(dd$mRS_num, levels = sort(unique(dd$mRS_num)))
+    fit <- polr(formula, data = dd, method = "logistic", Hess = TRUE)
+    est[i] <- coef(fit)[var]; se[i] <- sqrt(vcov(fit)[var, var])
+  }
+  p_est <- mean(est); W <- mean(se^2); B <- sum((est - p_est)^2) / (imp$m - 1); T <- W + (1 + 1 / imp$m) * B
+  p_se <- sqrt(T)
+  list(or = exp(p_est), lo = exp(p_est - 1.96 * p_se), hi = exp(p_est + 1.96 * p_se), p = 2 * (1 - pnorm(abs(p_est / p_se))))
+}
+rp_bmi <- pool_polr(imp, as.formula(paste0("mRS_ordered ~ vitd_per10 + ", age_col, " + ", gender_col, " + BMI + log_followup")))
+cat(sprintf("Imputed {age,gender,BMI} (n=%d): OR=%.3f (%.3f-%.3f) P=%.4f\n",
+            nrow(imp_data), rp_bmi$or, rp_bmi$lo, rp_bmi$hi, rp_bmi$p))
+
+# ---------- R6: NLR as inflammatory marker (surrogate for CRP) ----------
+cat("\n--- R6: NLR as inflammatory marker ---\n")
+if ("NLR" %in% colnames(data)) {
+  cs <- cor.test(data$NLR, data[[vitd_col]], method = "spearman", exact = FALSE)
+  cat(sprintf("Spearman NLR vs 25(OH)D: rho=%.3f P=%.4f\n", cs$estimate, cs$p.value))
+  wn <- wilcox.test(data$NLR[grp == 0], data$NLR[grp == 1])
+  cat(sprintf("NLR good vs poor: median %.2f vs %.2f P=%.4f\n",
+              median(data$NLR[grp == 0]), median(data$NLR[grp == 1]), wn$p.value))
+  m3_nlr <- polr(as.formula(paste0("mRS_ordered ~ vitd_per10 + ", adj_m3, " + NLR")),
+                 data = data, method = "logistic", Hess = TRUE)
+  rn <- extract_polr_or(m3_nlr, "vitd_per10")
+  cat(sprintf("Model 3 + NLR: 25(OH)D OR=%.3f (%.3f-%.3f) P=%.4f\n",
+              rn$or, rn$ci_lower, rn$ci_upper, rn$p_value))
+  rn_nlr <- extract_polr_or(m3_nlr, "NLR")
+  cat(sprintf("  NLR (per unit) OR=%.3f (%.3f-%.3f) P=%.4f\n",
+              rn_nlr$or, rn_nlr$ci_lower, rn_nlr$ci_upper, rn_nlr$p_value))
+} else {
+  cat("NLR column not found in data; R6 NLR analysis skipped.\n")
+}
+
+# ---------- R7: Post-hoc power & minimum detectable effect size ----------
+cat("\n--- R7: Post-hoc power & MDES ---\n")
+if (!is.null(res3)) {
+  z_obs <- abs(res3$coefficient) / res3$se
+  wald_power <- pnorm(z_obs - qnorm(0.975))
+  cat(sprintf("Wald post-hoc power (alpha=0.05, two-sided): %.3f\n", wald_power))
+  mdes_OR <- exp(-(qnorm(0.975) + qnorm(0.80)) * res3$se)
+  cat(sprintf("Minimum detectable OR (80%% power): %.3f per 10 nmol/L (i.e., >= %.1f%% reduction)\n",
+              mdes_OR, (1 - mdes_OR) * 100))
+} else {
+  cat("Model 3 unavailable; R7 power analysis skipped.\n")
+}
+
+# ---------- R4: DAG minimal sufficient adjustment sets ----------
+# The minimal sufficient adjustment sets were pre-computed in DAGitty (v3.1)
+# and are NOT re-derived in R. The two equivalent minimal sufficient adjustment
+# sets for the total effect of VitD on mRS are {age, sex, blood pressure} and
+# {age, sex, BMI}. The DAG structure sensitivity analysis (altering key edge
+# directions) is reported in the Supplementary Information; its results are
+# recorded below for reproducibility only.
+cat("\n--- R4: DAG minimal sufficient adjustment sets (pre-computed in DAGitty v3.1) ---\n")
+dag_results <- list(
+  core = c("{ Age, BP, Sex }", "{ Age, BMI, Sex }"),                                # primary
+  A    = c("{ Age, Sex }"),                                                         # VitD -> BMI (mediator)
+  B    = c("{ Age, BP, Sex, Volume }", "{ Age, BMI, Sex, Volume }"),                # hematoma volume as confounder
+  C    = c("{ Age, BP, Sex, Surgery }", "{ Age, BMI, Sex, Surgery }")               # surgery as confounder
+)
+cat("Core DAG minimal sufficient adjustment sets:\n"); print(dag_results$core)
+cat("Sensitivity A (VitD -> BMI, BMI as mediator):\n"); print(dag_results$A)
+cat("Sensitivity B (hematoma volume as confounder):\n"); print(dag_results$B)
+cat("Sensitivity C (surgery as confounder):\n"); print(dag_results$C)
+writeLines(c(
+  "DAG minimal sufficient adjustment sets (pre-computed in DAGitty v3.1)",
+  paste("Core:", paste(dag_results$core, collapse = " ; ")),
+  paste("Sensitivity A (VitD->BMI):", paste(dag_results$A, collapse = " ; ")),
+  paste("Sensitivity B (+Volume->VitD):", paste(dag_results$B, collapse = " ; ")),
+  paste("Sensitivity C (+Surgery->VitD):", paste(dag_results$C, collapse = " ; "))
+), file.path(output_dir, "R4_DAG_adjustment_sets.txt"))
+
+cat("\n========== Major revision analyses complete ==========\n")
 
 # ============================================================================
 # 15. Session info & cleanly close all sinks
