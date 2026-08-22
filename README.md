@@ -74,8 +74,12 @@ Note: The output/ folder is created automatically on the first run.
    script from its component variables (GCS, age, hemorrhage location, hematoma
    volume, and intraventricular extension), so it does not need to be supplied
    pre-computed in the input file.
-3. Ensure the dataset is fully de-identified before sharing — no direct
-   patient identifiers (e.g., name, ID number, exact address) should be present.
+3. De-identification: the shared dataset is fully de-identified. All direct
+   identifiers have been removed — the hospital admission number (`No`), the
+   admission date (`datein`), and the follow-up date (`followday`). Only the
+   de-identified analysis variables are retained; note that the follow-up
+   *duration in days* (`follow-up duration`, an analysis covariate used in
+   every adjusted model) is kept, whereas the raw follow-up *date* is not.
 
 ================================================================================
 5. Running the Code
