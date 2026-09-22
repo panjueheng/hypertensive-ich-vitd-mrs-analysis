@@ -38,6 +38,23 @@ if (!dir.exists(output_dir)) {
   cat("Created output directory:", output_dir, "\n")
 }
 
+# =====================================================
+# 0. Scientific Reports / Nature Portfolio artwork settings
+# =====================================================
+# Build the figure at final printed size so that the point sizes below are the
+# sizes that appear on the page.  Nature Portfolio final-artwork widths:
+# single column 88 mm, double column 180 mm; this figure is double column.
+# Text must be sans-serif (Arial or Helvetica) between 5 and 7 pt final size,
+# and outlines between 0.25 and 1.5 pt.
+FIG_W_MM   <- 180      # double-column width
+FIG_H_MM   <- 160
+PT_MM      <- 25.4 / 72           # 1 pt expressed in mm
+LABEL_PT   <- 7                   # node labels: 7 pt at final size
+LABEL_MM   <- LABEL_PT * PT_MM    # ggplot2 geom_text size is in mm
+STROKE_PT  <- 1.3                 # node outline width (allowed 0.25-1.5 pt)
+STROKE_SEL <- 1.45                # selection node, still within the limit
+mm2in      <- function(x) x / 25.4
+
 # ---- Required packages (auto-install if missing) ----
 required_pkgs <- c("tidyverse", "tidygraph", "ggraph")
 for (pkg in required_pkgs) {
@@ -62,9 +79,9 @@ nodes <- tibble::tribble(
   ~name,                          ~x,    ~y,    ~time_layer,
   # T0: Long-term characteristics (ancestors)
   "Age",                          0.2,   0.85,  "T0",
-  "Gender",                        0.4,   0.85,  "T0",
-  "Smoking",                       0.6,   0.85,  "T0",
-  "Socioeconomic status",          0.7,   0.85,  "T0",
+  "Sex",                        0.4,   0.85,  "T0",
+  "Smoking",                       0.575, 0.85,  "T0",
+  "Socioeconomic status",          0.700, 0.85,  "T0",
   # T1: Exposure and immediate determinants
   "Sun exposure",                 0.3,   0.65,  "T1",
   "BMI",                          0.5,   0.65,  "T1",
@@ -131,7 +148,9 @@ check_node_overlap <- function(nodes_df,
 }
 
 cat("\n========== 节点位置重叠检测 ==========")
-check_node_overlap(nodes)
+check_node_overlap(nodes,
+                   plot_w_in = mm2in(FIG_W_MM),
+                   plot_h_in = mm2in(FIG_H_MM))
 cat("========================================\n")
 
 # =====================================================
@@ -142,7 +161,7 @@ edges <- tibble::tribble(
   # T0 -> T1 (ancestors influence exposure)
   "Age", "25(OH)D",
   "Age", "Blood pressure",
-  "Gender", "25(OH)D",
+  "Sex", "25(OH)D",
   "Smoking", "Blood pressure",
   "Socioeconomic status", "25(OH)D",
   "Socioeconomic status", "mRS",
@@ -204,10 +223,9 @@ dag_graph <- dag_graph %>%
       node_type == "outcome" ~ 22,
       TRUE ~ 18
     ),
-    node_stroke = case_when(
-      node_type == "selection" ~ 2.5,  # Thicker border for selection
-      TRUE ~ 1.2
-    ),
+    # Outline width in mm; Nature Portfolio allows 0.25-1.5 pt.
+    node_stroke = ifelse(node_type == "selection",
+                         STROKE_SEL * PT_MM, STROKE_PT * PT_MM),
     # Time layer for background coloring
     time_layer = factor(time_layer, levels = c("T0", "T1", "T2", "T3"))
   )
@@ -216,18 +234,14 @@ dag_graph <- dag_graph %>%
 # 5. Plot DAG (STROBE-compliant, clean layout)
 # =====================================================
 
-# Apply Frontiers-compliant theme (font size ≥8pt, clear lines)
-# Note: theme_void() sets plot.background to element_blank() (transparent).
-# This causes TIFF output to retain an alpha channel, which image viewers
-# render as a checkerboard grid. Explicitly force a white background so
-# both PDF and TIFF render with an opaque white canvas (Frontiers requirement).
-frontiers_theme <- theme(
-  plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
-  plot.subtitle = element_text(hjust = 0.5, size = 12),
-  plot.margin = margin(20, 40, 40, 20),
-  plot.caption = element_text(hjust = 0, size = 10, face = "italic", lineheight = 1.2),
-  text = element_text(family = "Arial"),  # Ensure Arial font
-  # Force opaque white background (overrides theme_void()'s transparent background)
+# Scientific Reports house theme.  Note: theme_void() sets plot.background to
+# element_blank() (transparent), which leaves an alpha channel in the TIFF that
+# viewers render as a checkerboard grid, so an opaque white canvas is forced.
+# The figure carries no title or legend: those live in the manuscript \u2019
+# figure legends section, which is what the journal requires.
+scirep_theme <- theme(
+  plot.margin = margin(4, 12, 6, 4),
+  text = element_text(family = "Arial"),
   plot.background = element_rect(fill = "white", colour = NA),
   panel.background = element_rect(fill = "white", colour = NA)
 )
@@ -262,8 +276,10 @@ p <- ggraph(dag_graph, layout = "manual", x = x_vec, y = y_vec) +
   
   # Draw node labels
   geom_node_text(
-    aes(label = name),
-    size = 3.5,
+    # labels of the right-most nodes are right-aligned towards the node centre
+    # so that they cannot run past the edge of the canvas
+    aes(label = name, hjust = ifelse(x > 0.66, 1, 0.5)),
+    size = LABEL_MM,   # 7 pt at final size
     repel = FALSE,  # Manual layout, no repel needed
     nudge_y = 0.03,
     fontface = "bold"
@@ -273,7 +289,7 @@ p <- ggraph(dag_graph, layout = "manual", x = x_vec, y = y_vec) +
   annotate("text",
            x = 0.5, y = -0.02,
            label = "Selection\n(index event & attrition bias)",
-           size = 2.5,
+           size = LABEL_MM,   # 7 pt at final size
            fontface = "italic",
            color = "#5A5A5A",
            hjust = 0.5,
@@ -283,12 +299,7 @@ p <- ggraph(dag_graph, layout = "manual", x = x_vec, y = y_vec) +
   # Title and theme
   coord_cartesian(clip = "off") +
   theme_void() +
-  frontiers_theme +  # Apply Frontiers-compliant theme
-  labs(
-    title = "Directed Acyclic Graph (DAG) of 25(OH)D and mRS",
-    subtitle = "Core causal structure with selection bias mechanism",
-    caption = "Nodes: Exposure (gold), Outcome (blue), Confounders (gray), Selection bias (red diamond).\nMinimal sufficient adjustment set: {Age, Gender, Blood pressure}"
-  )
+  scirep_theme
 
 print(p)
 
@@ -308,7 +319,7 @@ run_info <- c(
   paste0("R version:      ", R.version$version.string),
   paste0("Platform:       ", R.version$platform),
   src_note,
-  paste0("Output files:   core_DAG.pdf, core_DAG.tiff")
+  paste0("Output files:   core_DAG.pdf, core_DAG.eps, core_DAG.tiff")
 )
 writeLines(run_info, file.path(output_dir, "00_run_info.txt"))
 cat("Run info written -> output/00_run_info.txt\n")
@@ -320,35 +331,52 @@ cat("Run info written -> output/00_run_info.txt\n")
 # Output directory is fixed to OUTPUT_DIR (defined in the header scaffolding,
 # defaults to <project_root>/output/). No interactive prompt is used.
 pdf_file  <- file.path(output_dir, "core_DAG.pdf")
+eps_file  <- file.path(output_dir, "core_DAG.eps")
 tiff_file <- file.path(output_dir, "core_DAG.tiff")
 
-# Save as PDF (primary format for Frontiers)
+# Vector output is the preferred format for line art and schematics.
 ggsave(
   filename = pdf_file,
   plot = p,
-  device = cairo_pdf,      # Use cairo device for font embedding
-  width = 7,               # Frontiers double-column width: 180mm ≈ 7.09 inches
-  height = 7,              # Square format
+  device = cairo_pdf,      # cairo device embeds the Arial outlines
+  width = mm2in(FIG_W_MM), # 180 mm = double column
+  height = mm2in(FIG_H_MM),
   units = "in",
-  dpi = 300,               # Frontiers requires ≥300 DPI
-  family = "Arial"         # Embed Arial font
+  family = "Arial"
 )
 
-# Save as TIFF (alternative format, also accepted by Frontiers)
+# EPS, the vector format named explicitly in the journal instructions.
+tryCatch(
+  ggsave(
+    filename = eps_file,
+    plot = p,
+    device = function(filename, width, height, ...) {
+      grDevices::cairo_ps(filename, width = width, height = height,
+                         onefile = TRUE, family = "Arial", ...)
+    },
+    width = mm2in(FIG_W_MM),
+    height = mm2in(FIG_H_MM),
+    units = "in"
+  ),
+  error = function(e) warning("EPS not written: ", conditionMessage(e))
+)
+
+# Raster fallback at final size: 600 dpi, LZW compressed, RGB.
 ggsave(
   filename = tiff_file,
   plot = p,
   device = "tiff",
-  width = 7,
-  height = 7,
+  width = mm2in(FIG_W_MM),
+  height = mm2in(FIG_H_MM),
   units = "in",
-  dpi = 300,
-  compression = "lzw"    # LZW compression to reduce file size
+  dpi = 600,
+  compression = "lzw"
 )
 
-message("Main DAG (STROBE-compliant) saved as:")
-message(paste("  -", pdf_file, "(PDF, Frontiers-compliant)"))
-message(paste("  -", tiff_file, "(TIFF, Frontiers-compliant)"))
+message("Main DAG saved at 180 mm double-column width:")
+message(paste("  -", pdf_file,  "(PDF, vector)"))
+message(paste("  -", eps_file,  "(EPS, vector)"))
+message(paste("  -", tiff_file, "(TIFF, 600 dpi, LZW)"))
 
 # ---- Session info (reproducibility) ----
 si_lines <- capture.output(sessionInfo())
