@@ -38,6 +38,28 @@ if (!dir.exists(output_dir)) {
   cat("Created output directory:", output_dir, "\n")
 }
 
+# =====================================================
+# 0. Scientific Reports / Nature Portfolio artwork settings
+# =====================================================
+# The figure is built at final printed size so the point sizes below are the
+# sizes that appear on the page.  Double-column width is 180 mm; this DAG is
+# node-dense, so the canvas is made taller than the printed width to keep the
+# labels legible at 7 pt.  Every absolute dimension (node diameter, outline
+# width, arrow length, end caps) is specified on this canvas, which is why the
+# node diameters are smaller than on the old 12 x 10 inch canvas.
+FIG_W_MM   <- 180
+FIG_H_MM   <- 200
+PT_MM      <- 25.4 / 72           # 1 pt expressed in mm
+LABEL_PT   <- 7                   # node labels: 7 pt at final size
+LABEL_MM   <- LABEL_PT * PT_MM    # ggplot2 geom_text size is in mm
+STROKE_PT  <- 1.3                 # node outline (allowed 0.25-1.5 pt)
+STROKE_SEL <- 1.45
+NODE_MM    <- 10.5                # node diameter in mm on this canvas
+NODE_SEL   <- 14
+ARROW_MM   <- 2.5
+CAP_MM     <- 6                   # edge trimmed this far from the node centre
+mm2in      <- function(x) x / 25.4
+
 # ---- Required packages (auto-install if missing) ----
 required_pkgs <- c("tidyverse", "tidygraph", "ggraph")
 for (pkg in required_pkgs) {
@@ -87,7 +109,7 @@ nodes <- tibble::tribble(
   "BMI",                          0.720, 1 - 0.242,
   "GCS",                          0.539, 1 - 0.825,
   "GGT",                          0.100, 1 - 0.790,
-  "Gender",                       0.298, 1 - 0.175,
+  "Sex",                          0.298, 1 - 0.175,
   "Hemoglobin",                   0.120, 1 - 0.880,
   "Malignancy",                   0.900, 1 - 0.590,
   "NIHSS",                        0.642, 1 - 0.779,
@@ -143,10 +165,10 @@ edges <- tibble::tribble(
   "BMI", "25(OH)D",
   "BMI", "Blood pressure",
   "GCS", "mRS",
-  "Gender", "25(OH)D",
-  "Gender", "HDL-C",
-  "Gender", "LDL-C",
-  "Gender", "mRS",
+  "Sex", "25(OH)D",
+  "Sex", "HDL-C",
+  "Sex", "LDL-C",
+  "Sex", "mRS",
   "Malignancy", "Selection",
   "Malignancy", "mRS",
   "NIHSS", "mRS",
@@ -202,8 +224,9 @@ dag_graph <- dag_graph %>%
       node_type == "latent" ~ "#FFFFFF",
       TRUE ~ "#F0F0F0"
     ),
-    node_size = ifelse(is_selection, 24, 18),
-    node_stroke = ifelse(is_selection, 2, 1.2)
+    node_size = ifelse(is_selection, NODE_SEL, NODE_MM),
+    # Outline width in mm; Nature Portfolio allows 0.25-1.5 pt.
+    node_stroke = ifelse(is_selection, STROKE_SEL * PT_MM, STROKE_PT * PT_MM)
   )
 
 # =====================================================
@@ -214,9 +237,9 @@ p <- ggraph(dag_graph, layout = "manual", x = x, y = y) +
   geom_edge_link(
     colour = "grey40",
     alpha = 0.6,
-    arrow = arrow(length = unit(4, "mm")),
-    end_cap = circle(10, "mm"),
-    start_cap = circle(10, "mm")
+    arrow = arrow(length = unit(ARROW_MM, "mm")),
+    end_cap = circle(CAP_MM, "mm"),
+    start_cap = circle(CAP_MM, "mm")
   ) +
   
   geom_node_point(
@@ -231,15 +254,15 @@ p <- ggraph(dag_graph, layout = "manual", x = x, y = y) +
   
   geom_node_text(
     aes(label = name),
-    size = 3.2,
+    size = LABEL_MM,   # 7 pt at final size
     repel = TRUE,
-    nudge_y = -0.06,
-    segment.color = "grey60",
-    segment.size = 0.3,
-    segment.alpha = 0.5,
-    box.padding = 0.025,
-    point.padding = 0.015,
-    force = 1.5,
+    nudge_y = -0.045,
+    segment.color = "grey45",
+    segment.size = 0.35,     # ~1 pt, inside the 0.25-1.5 pt range
+    segment.alpha = 0.8,
+    box.padding = 0.012,
+    point.padding = 0.008,
+    force = 0.7,             # gentler repulsion: labels stay near their node
     fontface = "bold",
     max.overlaps = 100
   ) +
@@ -248,14 +271,12 @@ p <- ggraph(dag_graph, layout = "manual", x = x, y = y) +
   theme_void() +
   theme(
     legend.position = "none",
-    plot.title = element_text(hjust = 0.5, face = "bold", family = "Arial"),
-    plot.margin = margin(30, 30, 60, 30),
+    plot.margin = margin(6, 6, 6, 6),
     text = element_text(family = "Arial"),
     # Force opaque white background (overrides theme_void()'s transparent background)
     plot.background = element_rect(fill = "white", colour = NA),
     panel.background = element_rect(fill = "white", colour = NA)
-  ) +
-  labs(title = "Directed Acyclic Graph (DAG) with Selection Node")
+  )
 
 print(p)
 
@@ -275,7 +296,8 @@ run_info <- c(
   paste0("R version:      ", R.version$version.string),
   paste0("Platform:       ", R.version$platform),
   src_note,
-  paste0("Output files:   Figure_S1_comprehensive_DAG.pdf, Figure_S1_comprehensive_DAG.tiff")
+  paste0("Output files:   Figure_S1_comprehensive_DAG.pdf, ",
+         "Figure_S1_comprehensive_DAG.eps, Figure_S1_comprehensive_DAG.tiff")
 )
 writeLines(run_info, file.path(output_dir, "00_run_info.txt"))
 cat("Run info written -> output/00_run_info.txt\n")
@@ -287,35 +309,51 @@ cat("Run info written -> output/00_run_info.txt\n")
 # Output directory is fixed to OUTPUT_DIR (defined in the header scaffolding,
 # defaults to <project_root>/output/). No interactive prompt is used.
 pdf_file  <- file.path(output_dir, "Figure_S1_comprehensive_DAG.pdf")
+eps_file  <- file.path(output_dir, "Figure_S1_comprehensive_DAG.eps")
 tiff_file <- file.path(output_dir, "Figure_S1_comprehensive_DAG.tiff")
 
-# Save as PDF (use cairo device for font embedding)
+# Vector output is the preferred format for line art and schematics.
 ggsave(
   filename = pdf_file,
   plot = p,
   device = cairo_pdf,
-  width = 12,
-  height = 10,
+  width = mm2in(FIG_W_MM),
+  height = mm2in(FIG_H_MM),
   units = "in",
-  dpi = 600,
   family = "Arial"
 )
 
-# Save as TIFF (LZW compression to reduce file size)
+tryCatch(
+  ggsave(
+    filename = eps_file,
+    plot = p,
+    device = function(filename, width, height, ...) {
+      grDevices::cairo_ps(filename, width = width, height = height,
+                         onefile = TRUE, family = "Arial", ...)
+    },
+    width = mm2in(FIG_W_MM),
+    height = mm2in(FIG_H_MM),
+    units = "in"
+  ),
+  error = function(e) warning("EPS not written: ", conditionMessage(e))
+)
+
+# Raster fallback at final size: 600 dpi, LZW compressed, RGB.
 ggsave(
   filename = tiff_file,
   plot = p,
   device = "tiff",
-  width = 12,
-  height = 10,
+  width = mm2in(FIG_W_MM),
+  height = mm2in(FIG_H_MM),
   units = "in",
   dpi = 600,
   compression = "lzw"
 )
 
-message("Comprehensive DAG saved as:")
-message(paste("  -", pdf_file, "(PDF)"))
-message(paste("  -", tiff_file, "(TIFF)"))
+message("Comprehensive DAG saved at 180 mm double-column width:")
+message(paste("  -", pdf_file,  "(PDF, vector)"))
+message(paste("  -", eps_file,  "(EPS, vector)"))
+message(paste("  -", tiff_file, "(TIFF, 600 dpi, LZW)"))
 
 # ---- Session info (reproducibility) ----
 si_lines <- capture.output(sessionInfo())
