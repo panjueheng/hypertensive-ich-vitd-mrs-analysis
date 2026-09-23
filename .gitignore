@@ -1,7 +1,24 @@
-library/
-local/
-cellar/
-lock/
-python/
-sandbox/
-staging/
+# R / RStudio
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+*.Rproj.user
+
+# renv: the lockfile is versioned, the library is not
+renv/library/
+renv/local/
+renv/cellar/
+renv/lock/
+renv/python/
+renv/sandbox/
+renv/staging/
+
+# Generated results: reproducible from Allanalysis.R, not versioned
+output/*
+!output/.gitkeep
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+~$*.docx
