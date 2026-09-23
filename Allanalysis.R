@@ -969,25 +969,61 @@ forest_plot <- function(dat, prefix, height_mm) {
   dat$est <- paste0(dat$est, ", ",
                     ifelse(dat$P < 0.001, "P < 0.001",
                            paste0("P = ", sprintf("%.3f", dat$P))))
+  # Layout. The x scale carries both the plotted estimates and the two text
+  # columns, so that everything stays aligned row by row:
+  #   analysis names  right-aligned just outside the left edge of the panel
+  #   estimates        plotted inside the panel
+  #   OR (95% CI), P   printed to the RIGHT of the panel (x > PANEL_MAX), so
+  #                    that the text column never crosses the panel
+  # The panel window is fitted to the data rather than fixed: it is padded by
+  # PAD on each side and then rounded outwards to the next multiple of 0.05.
+  # A fixed window (the earlier 0.36-1.55) left the whole right-hand third of
+  # the panel empty, because the widest confidence limit in either figure is
+  # about 1.08, so the OR (95% CI), P column ended up far away from the plotted
+  # estimates. Fitting the window leaves about 10 mm of clear space between the
+  # widest upper limit and the text column: close enough to read as one block,
+  # far enough that the two never touch.
+  PAD       <- 0.03                                  # data-to-axis padding
+  PANEL_MIN <- floor((min(dat$LCL) - PAD) * 20) / 20 # left edge of the panel
+  PANEL_MAX <- ceiling((max(dat$UCL) + PAD) * 20) / 20  # right edge
+  LAB_X     <- PANEL_MIN + 0.002   # analysis names, right-aligned at the edge
+  TEXT_X    <- PANEL_MAX + 0.03    # OR (95% CI), P, just past the panel
+  BRK       <- seq(ceiling(PANEL_MIN * 10) / 10,
+                   floor((PANEL_MAX - 0.02) * 10) / 10, by = 0.1)
   p <- ggplot(dat) +
     geom_vline(xintercept = 1, linetype = "dashed", colour = "grey50", linewidth = 0.4) +
     geom_errorbar(aes(xmin = LCL, xmax = UCL, y = y), width = 0.16, linewidth = 0.4) +
     geom_point(aes(x = OR, y = y), shape = 15, size = 2.4) +
-    geom_text(aes(x = 0.362, y = y, label = lab), hjust = 1, size = 2.6,
+    geom_text(aes(x = LAB_X, y = y, label = lab), hjust = 1, size = 2.4,
               family = FIG_FONT) +
-    geom_text(aes(x = 1.16, y = y, label = est), hjust = 0, size = 2.6,
+    geom_text(aes(x = TEXT_X, y = y, label = est), hjust = 0, size = 2.4,
               family = FIG_FONT) +
-    scale_x_continuous(
-      breaks = c(0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1),
-      limits = c(0.36, 1.55), expand = c(0, 0)) +
-    coord_cartesian(clip = "off") +
-    labs(x = "Odds ratio for a worse mRS with higher 25(OH)D (95% CI)", y = NULL) +
-    theme_bw(base_family = FIG_FONT, base_size = 9) +
+    scale_x_continuous(breaks = BRK, expand = c(0, 0)) +
+    # The panel window is fixed through coord_cartesian(), NOT through the
+    # limits of the scale: a scale limit would drop the text drawn beyond
+    # PANEL_MAX (the OR/CI/P column) as missing values, whereas
+    # coord_cartesian(clip = "off") keeps the window identical but still draws
+    # that text outside the panel border.
+    coord_cartesian(xlim = c(PANEL_MIN, PANEL_MAX), clip = "off") +
+    labs(x = paste0("Odds ratio for a worse mRS per 10 nmol/L higher 25(OH)D",
+                    "\n(95% CI)"), y = NULL) +
+    theme_bw(base_family = FIG_FONT, base_size = 8) +
+    # A forest plot carries no frame: the panel border is removed and only the
+    # bottom axis line is kept, which is the convention of Cochrane reviews and
+    # of NEJM / Lancet / JAMA. The dashed line at OR = 1 already supplies the
+    # reference and the row labels supply the row alignment, so the top, left
+    # and right edges carry no information and would only crowd the
+    # OR (95% CI), P column that sits outside the panel.
     theme(panel.grid = element_blank(),
+          panel.border = element_blank(),
+          axis.line.x.bottom = element_line(colour = "grey20", linewidth = 0.3),
+          axis.line.y = element_blank(),
+          axis.ticks.x = element_line(colour = "grey20", linewidth = 0.25),
+          axis.ticks.length.x = unit(1.5, "mm"),
           axis.text.y = element_blank(),
           axis.ticks.y = element_blank(),
-          axis.title.x = element_text(size = 8),
-          plot.margin = margin(4, 40, 4, 78, "mm"))
+          axis.title.x = element_text(size = 7),
+          plot.margin = margin(4, 40, 4, 62, "mm"))
   ggsave(paste0(prefix, ".pdf"), p, width = FIG_W_MM, height = height_mm,
          units = "mm", device = cairo_pdf)
   tiff(paste0(prefix, ".tiff"), width = FIG_W_MM, height = height_mm,
@@ -1742,7 +1778,7 @@ flow_plot <- function() {
   left_x <- 0.205;  left_w <- 0.29
   right_x <- 0.700; right_w <- 0.455
   box1_y <- 0.930; box1_h <- 0.075
-  box2_y <- 0.620; box2_h <- 0.070
+  box2_y <- 0.640; box2_h <- 0.070
   box3_y <- 0.075; box3_h <- 0.090
   exc1_y <- 0.930; exc1_h <- 0.130
   exc2_y <- 0.390; exc2_h <- 0.560
@@ -1759,8 +1795,17 @@ flow_plot <- function() {
   flow_arrow(left_x, box2_y - box2_h / 2 - 0.006, left_x, box3_y + box3_h / 2 + 0.006)
   dash_x0 <- left_x + left_w / 2 + 0.008
   dash_x1 <- right_x - right_w / 2 - 0.008
+  # Both connectors are drawn horizontally, at the height of the row they come
+  # from. The first row is level with the centre of its exclusion box, so the
+  # two endpoints coincide. The second exclusion box is much taller (thirteen
+  # reasons, spanning most of the lower half), and its centre sits well below
+  # the row, which is why an earlier version sloped down to it. The row is
+  # therefore placed level with the header line of that box (y = 0.640): the
+  # connector now runs straight across, parallel to the first one, and meets the
+  # box above its internal rule (y = 0.614) and below its top edge (y = 0.670),
+  # so it neither crosses the rule nor runs collinearly with the border.
   flow_dashed(dash_x0, box1_y, dash_x1, exc1_y)
-  flow_dashed(dash_x0, box2_y, dash_x1, exc2_y)
+  flow_dashed(dash_x0, box2_y, dash_x1, box2_y)
   grid.text("ICH, intracerebral haemorrhage; 25(OH)D, 25-hydroxyvitamin D; mRS, modified Rankin Scale.",
             x = 0.985, y = 0.032,
             gp = gpar(fontsize = FS_FOOT, col = COL_TEXT, fontfamily = "sans"),
