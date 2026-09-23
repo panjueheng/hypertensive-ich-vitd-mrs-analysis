@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) <2026> <Jueheng Pan>
+Copyright (c) 2026 Jueheng Pan
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,3 +19,19 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+------------------------------------------------------------------------------
+DATA LICENCE (applies to data/clean/final_ich_cohort.xlsx only)
+------------------------------------------------------------------------------
+The MIT licence above covers the analysis code. The de-identified analytic
+data set in data/clean/ is made available under the Creative Commons
+Attribution 4.0 International licence (CC BY 4.0),
+https://creativecommons.org/licenses/by/4.0/
+
+You are free to share and adapt the data set for any purpose, provided that
+you give appropriate credit to this study and indicate whether you changed
+the data. The data set is de-identified: no names, hospital admission
+numbers, admission dates or follow-up dates are included (see Section 4 of
+README.md). It is released so that the analyses reported in the accompanying
+manuscript can be verified and extended, not for re-identification; users must
+not attempt to re-identify any individual participant.
