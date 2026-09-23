@@ -1,0 +1,35 @@
+﻿column,description,type,units_or_coding,missing,role_in_analysis
+gender,Sex of the patient; the script normalises this column to "sex",categorical,"1 = Male (n=63); 2 = Female (n=27)",0,Covariate in Models 2 and 3
+age,Age at hospital admission,continuous,years,0,"Covariate; entered as age/10 in ordinal::clm fits"
+location,Anatomical site of the haematoma (five-level coding in the source extract),categorical,1-5 (counts 59/21/6/3/1); the five-level coding is not documented further,0,"NOT USED. Allanalysis.R line 264 overwrites this column with the two-level supratentorial/infratentorial factor derived from ""Hemorrhage location"". Retained only because it is part of the original extract."
+hematoma volume,Haematoma volume on admission CT,continuous,mL,0,Covariate; dichotomised at >=30 mL for subgroup/effect-modification checks
+intraventricular extension,Extension of the haematoma into the ventricles,categorical,"0 = No (n=53); 1 = Yes (n=37)",0,Descriptive and interaction check
+BMI,Body mass index,continuous,kg/m2,54 (60.0%),"Not in the primary model; complete-case and multiple-imputation sensitivity analyses only"
+SBP,Systolic blood pressure on admission,continuous,mmHg,0,"Covariate in Model 3; entered as SBP/10 in ordinal::clm fits"
+DBP,Diastolic blood pressure on admission,continuous,mmHg,0,Descriptive only
+MAP,Mean arterial pressure on admission,continuous,mmHg,0,Descriptive only
+GCS,Glasgow Coma Scale score on admission,continuous,score,0,"Severity marker; dichotomised at <=8 for interaction checks"
+NIHSS,National Institutes of Health Stroke Scale score on admission,continuous,score,0,Severity marker used in a sensitivity analysis
+surgical treatment,Any neurosurgical treatment during the admission,categorical,"0 = No (n=52); 1 = Yes (n=38)",0,Sensitivity analysis and interaction check
+mRS,Modified Rankin Scale score at follow-up,ordinal,"0-5 (no patient scored 6); counts 0/12 1/10 2/18 3/22 4/17 5/11",0,OUTCOME of every model
+follow-up duration,Time from admission to the outcome assessment,continuous,days (range 86-186; median 107.5),0,"Covariate; entered as log(days) (log_fu)"
+Hemorrhage location,Supratentorial versus infratentorial compartment,categorical,"1 = Supratentorial (n=86); 2 = Infratentorial (n=4)",0,Descriptive; used as the two-level "location" factor
+admission period,Half-year of admission (seasonal contrast),categorical,"1 = May-October (n=37); 2 = November-April (n=53)",0,Seasonal-adjustment sensitivity analysis
+HGB,Haemoglobin,continuous,g/L,0,Table 1 and reverse-causation probes
+GLU,Random plasma glucose on admission,continuous,mmol/L,0,Reverse-causation sensitivity analysis
+Cr,Serum creatinine,continuous,umol/L,0,Table 1
+CHOL,Total cholesterol,continuous,mmol/L,0,Table 1
+TRIG,Triglycerides,continuous,mmol/L,0,Table 1
+HDL-C,HDL cholesterol,continuous,mmol/L,0,Table 1
+LDL-C,LDL cholesterol,continuous,mmol/L,0,Table 1
+ALT,Alanine aminotransferase,continuous,U/L,0,Table 1
+AST,Aspartate aminotransferase,continuous,U/L,0,Table 1
+GGT,Gamma-glutamyl transferase,continuous,U/L,0,Table 1
+ALP,Alkaline phosphatase,continuous,U/L,0,Table 1
+ALB,Serum albumin,continuous,g/L,0,Reverse-causation sensitivity analysis
+25-OH Vitamin D,Serum 25-hydroxyvitamin D on admission - the exposure,continuous,nmol/L,0,"EXPOSURE; analysed per 10 nmol/L (vitd10) and dichotomised at <50 nmol/L"
+ICH_score,Original ICH score,continuous,score,0,Supplied in the file; never recomputed inside the script
+NEUT,Neutrophil count,continuous,10^9/L,0,"Used only to derive NLR; not reported on its own"
+LY,Lymphocyte count,continuous,10^9/L,0,"Used only to derive NLR; not reported on its own"
+NLR,Neutrophil-to-lymphocyte ratio,continuous,ratio,0,Sensitivity analysis and correlation checks
+BCT,Onset-to-blood-sampling time,continuous,hours (range 1-12),0,"Eligibility criterion (>12 h excluded during cleaning) and descriptive"
