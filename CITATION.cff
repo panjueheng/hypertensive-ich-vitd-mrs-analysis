@@ -1,0 +1,46 @@
+cff-version: 1.2.0
+message: "If you use this software or data, please cite it as below."
+title: "Analysis code and data for: admission 25-hydroxyvitamin D and functional outcome after hypertensive intracerebral haemorrhage"
+abstract: >-
+  R analysis code and the de-identified analytic data set (n = 90) reproducing
+  every number, table and figure reported in the accompanying prospective cohort
+  study of admission serum 25-hydroxyvitamin D and 90-day modified Rankin Scale
+  outcome after hypertensive intracerebral haemorrhage.
+type: software
+license: MIT
+repository-code: "https://github.com/panjueheng/hypertensive-ich-vitd-mrs-analysis"
+doi: 10.5281/zenodo.21492322
+authors:
+  - family-names: Pan
+    given-names: Jueheng
+    email: jueheng_p@139.com
+    affiliation: "Department of Neurosurgery, The Affiliated Shunde Hospital of Jinan University, Foshan, China"
+  - family-names: Liang
+    given-names: Jinfeng
+    affiliation: "Department of Neurosurgery, The Affiliated Shunde Hospital of Jinan University, Foshan, China"
+  - family-names: Wu
+    given-names: Shuolong
+    affiliation: "Department of Neurosurgery, The Affiliated Shunde Hospital of Jinan University, Foshan, China"
+  - family-names: Ma
+    given-names: Jingxiang
+    affiliation: "Department of Neurosurgery, The Affiliated Shunde Hospital of Jinan University, Foshan, China"
+  - family-names: Luo
+    given-names: Kangzuo
+    affiliation: "Department of Neurosurgery, The Affiliated Shunde Hospital of Jinan University, Foshan, China"
+  - family-names: Liu
+    given-names: Jianling
+    affiliation: "Department of General Medicine, The Affiliated Shunde Hospital of Jinan University, Foshan, China"
+  - family-names: Wang
+    given-names: Xiaodong
+    affiliation: "Department of Neurosurgery, The First Affiliated Hospital of Jinan University, Guangzhou, China"
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.21492322
+    description: "Zenodo concept DOI (always resolves to the latest version)."
+keywords:
+  - 25-hydroxyvitamin D
+  - intracerebral haemorrhage
+  - modified Rankin Scale
+  - ordinal logistic regression
+  - directed acyclic graph
+  - R
